@@ -7,78 +7,91 @@ dotenv.config();
 
 export default (app) => {
   app.post('/signup', multer().none(), async (request, response) => {
+    if (!request.body) {
+      response.status(400).end();
+      return;
+    }
     const { username, password } = request.body;
+    const isUniqUsername = await app.dataSource.getRepository('User').findOneBy({ username }) === null;
+    if (!isUniqUsername) {
+      response.status(400).end();
+      return;
+    }
     const passwordDigest = crypto.createHash('sha256').update(password).digest('hex');
-    const token = jwt.sign({ username }, process.env.JWT_SECRET, {
+    const newToken = jwt.sign({}, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN,
     });
-    const refreshToken = jwt.sign({ username }, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN * 2,
+    const newRefreshToken = jwt.sign({ username }, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN,
     });
     const user = await app.dataSource.getRepository('User').save({
       username,
       password_digest: passwordDigest,
-      token,
-      refresh_token: refreshToken,
+      token: newToken,
+      refresh_token: newRefreshToken,
     });
     response.send(user);
   });
 
   app.post('/signin', multer().none(), async (request, response) => {
     const { username, password } = request.body;
-    const user = await app.dataSource.getRepository('User').findBy({ username });
+    const user = await app.dataSource.getRepository('User').findOneBy({ username });
     const passwordDigest = crypto.createHash('sha256').update(password).digest('hex');
-    if (user[0].password_digest === passwordDigest) {
-      const token = jwt.sign({ username }, process.env.JWT_SECRET, {
-        expiresIn: process.env.JWT_EXPIRES_IN,
-      });
-      const refreshToken = jwt.sign({ username }, process.env.JWT_SECRET, {
-        expiresIn: process.env.JWT_EXPIRES_IN * 2,
-      });
-      await app.dataSource.getRepository('User').update(user[0].id, {
-        token,
-        refresh_token: refreshToken,
-      });
-      response.send({
-        token,
-        refresh_token: refreshToken,
-      });
+    if (user.password_digest !== passwordDigest) {
+      response.status(403).end();
+      return;
     }
-    response.end();
+    const newToken = jwt.sign({}, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN,
+    });
+    const newRefreshToken = jwt.sign({}, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN,
+    });
+    await app.dataSource.getRepository('User').update(user.id, { token: newToken, refresh_token: newRefreshToken });
+    response.send({ token: newToken, refreshToken: newRefreshToken });
   });
 
   app.get('/logout', async (request, response) => {
-    const id = request.userId;
-    if (id) {
-      await app.dataSource.getRepository('User').update(id, {
-        token: 'NULL',
-        refresh_token: 'NULL',
-      });
+    if (!request.user) {
+      response.status(403).end();
+      return;
     }
+    const { id } = request.user;
+    await app.dataSource.getRepository('User').update(id, {
+      token: 'NULL',
+      refresh_token: 'NULL',
+    });
     response.end();
   });
 
-  app.get('/info', (request, response) => response.send({ username: request.user.username }));
+  app.get('/info', (request, response) => {
+    if (!request.user) {
+      response.status(403).end();
+      return;
+    }
+    response.send({ username: request.user.username });
+  });
 
   app.post('/signin/new_token', multer().none(), async (request, response) => {
-    const { refresh_token } = request.body;
-    const user = await app.dataSource.getRepository('User').findBy({ refresh_token });
-    if (user[0].id) {
-      const token = jwt.sign({}, process.env.JWT_SECRET, {
-        expiresIn: process.env.JWT_EXPIRES_IN,
-      });
-      const refreshToken = jwt.sign({}, process.env.JWT_SECRET, {
-        expiresIn: process.env.JWT_EXPIRES_IN * 2,
-      });
-      await app.dataSource.getRepository('User').update(user[0].id, {
-        token,
-        refresh_token: refreshToken,
-      });
-      response.send({
-        refreshToken,
-        token,
-      });
+    const { refreshToken } = request.body;
+    const user = await app.dataSource.getRepository('User').findOneBy({ refresh_token: refreshToken });
+    if (!user) {
+      response.status(403).end();
+      return;
     }
-    response.end();
+    try {
+      jwt.verify(refreshToken, process.env.JWT_SECRET);
+    } catch (error) {
+      response.status(403).end();
+      return;
+    }
+    const newToken = jwt.sign({}, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN,
+    });
+    const newRefreshToken = jwt.sign({}, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN,
+    });
+    await app.dataSource.getRepository('User').update(user.id, { token: newToken, refresh_token: newRefreshToken });
+    response.send({ token: newToken, refreshToken: newRefreshToken });
   });
 };
