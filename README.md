@@ -1,5 +1,5 @@
 ## About The Project
-This is a test task from the company Horns and Hooves LLC
+This is a test task from the company ERP.AERO
 
 ## Getting Started
 ### Installation
